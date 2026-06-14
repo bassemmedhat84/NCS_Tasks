@@ -1054,7 +1054,28 @@ const TaskPanel=({task:init,onClose,onUpdate,user})=>{
                   })
                 : React.createElement('span',{style:{fontSize:13.5,fontWeight:700}},dl)
             ),
-            React.createElement('div',{className:'dfl'},React.createElement('label',null,'Task Direction'),dir?React.createElement('span',{className:dir.cls},dir.icon,' ',dir.label):React.createElement('span',{style:{color:'var(--t3)'}}, '—')),
+            React.createElement('div',{className:'dfl'},
+              React.createElement('label',null,'Task Direction'),
+              (user.role==='global_admin'||user.role==='admin')
+                ? React.createElement('div',{style:{display:'flex',gap:8,marginTop:4,flexWrap:'wrap'}},
+                    Object.entries(DIRECTIONS).map(([k,d])=>
+                      React.createElement('button',{key:k,
+                        onClick:()=>{
+                          const log={id:uid(),performedBy:user.id,action:'changed direction to '+d.label,performedAt:new Date().toISOString()};
+                          upd({...task,direction:k,auditLog:[...(task.auditLog||[]),log]});
+                        },
+                        style:{
+                          padding:'4px 12px',borderRadius:8,cursor:'pointer',fontFamily:'var(--fb)',fontSize:12,fontWeight:700,
+                          border:'1.5px solid '+(task.direction===k||(!task.direction&&k==='normal')?'currentColor':'var(--bdr)'),
+                          background:task.direction===k||(!task.direction&&k==='normal')?d.cls==='dir-ms'?'#e0f2fe':d.cls==='dir-em'?'#f0fdf4':'var(--bg)':'var(--surf)',
+                          color:task.direction===k||(!task.direction&&k==='normal')?d.cls==='dir-ms'?'#0369a1':d.cls==='dir-em'?'#15803d':'var(--t2)':'var(--t3)',
+                          opacity:task.direction===k||(!task.direction&&k==='normal')?1:0.65
+                        }
+                      },d.icon+' '+d.label)
+                    )
+                  )
+                : dir?React.createElement('span',{className:dir.cls},dir.icon,' ',dir.label):React.createElement('span',{style:{color:'var(--t3)'}},'—')
+            ),
             React.createElement('div',{className:'dfl'},
               React.createElement('label',null,'Task Type'),
               isMgr
@@ -1782,6 +1803,65 @@ const Sidebar=({screen,setScreen,user,onLogout,open,setOpen,activeDept,setActive
     )
   );
 };
+// MENTIONS BELL COMPONENT
+const MentionsBell=({user})=>{
+  const {tasks,users}=useCtx();
+  const [showDrop,setShowDrop]=useState(false);
+  const seenKey='ncsflow_seen_mentions_'+user.id;
+  const getSeen=()=>{try{return JSON.parse(localStorage.getItem(seenKey)||'[]');}catch{return[];}};
+  const [seen,setSeen]=useState(getSeen);
+
+  const myMentions=[];
+  tasks.forEach(t=>{
+    (t.comments||[]).forEach(c=>{
+      if(c.mentions&&c.mentions.includes(user.id)&&c.userId!==user.id){
+        myMentions.push({taskId:t.id,taskTitle:t.title,commentId:c.id,from:c.userId,body:c.body,at:c.createdAt});
+      }
+    });
+  });
+
+  const unread=myMentions.filter(m=>!seen.includes(m.commentId));
+  const markAllSeen=()=>{
+    const allIds=myMentions.map(m=>m.commentId);
+    try{localStorage.setItem(seenKey,JSON.stringify(allIds));}catch{}
+    setSeen(allIds);setShowDrop(false);
+  };
+  const authorName=(uid)=>{const u=users.find(x=>x.id===uid);return u?u.fullName.split(' ')[0]:'Someone';};
+
+  return React.createElement('div',{style:{position:'relative'}},
+    React.createElement('button',{
+      onClick:()=>setShowDrop(v=>!v),title:'Mentions',
+      style:{position:'relative',width:34,height:34,borderRadius:8,border:'1px solid '+(unread.length>0?'#8b5cf6':'var(--bdr)'),background:unread.length>0?'#8b5cf618':'var(--bg)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:800,color:unread.length>0?'#8b5cf6':'var(--t3)',transition:'all .15s'}
+    },
+      '@',
+      unread.length>0&&React.createElement('span',{style:{position:'absolute',top:-6,right:-6,background:'#8b5cf6',color:'#fff',borderRadius:'50%',width:18,height:18,fontSize:10,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid var(--bg)'}},unread.length>9?'9+':unread.length)
+    ),
+    showDrop&&React.createElement('div',{style:{position:'absolute',top:42,right:0,width:320,maxHeight:400,overflowY:'auto',background:'var(--surf)',border:'1.5px solid var(--bdr)',borderRadius:14,boxShadow:'0 8px 32px #00000020',zIndex:9999}},
+      React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 14px',borderBottom:'1px solid var(--bdr)'}},
+        React.createElement('span',{style:{fontSize:13,fontWeight:800}},'💬 Mentions'),
+        React.createElement('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+          unread.length>0&&React.createElement('button',{onClick:markAllSeen,style:{fontSize:11,color:'#8b5cf6',background:'none',border:'none',cursor:'pointer',fontWeight:700,fontFamily:'var(--fb)'}},'Mark all read'),
+          React.createElement('button',{onClick:()=>setShowDrop(false),style:{fontSize:18,background:'none',border:'none',cursor:'pointer',color:'var(--t3)',lineHeight:1}},'×')
+        )
+      ),
+      myMentions.length===0
+        ? React.createElement('div',{style:{padding:'28px',textAlign:'center',color:'var(--t3)',fontSize:13}},'No mentions yet 👋')
+        : [...myMentions].reverse().map(m=>{
+            const isUnread=!seen.includes(m.commentId);
+            return React.createElement('div',{key:m.commentId,style:{padding:'10px 14px',borderBottom:'1px solid var(--bdr)',background:isUnread?'#8b5cf608':'transparent'}},
+              React.createElement('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:4,flexWrap:'wrap'}},
+                React.createElement('span',{style:{fontSize:11.5,fontWeight:700,color:'#8b5cf6'}},'@'+user.fullName.split(' ')[0]),
+                React.createElement('span',{style:{fontSize:11,color:'var(--t3)'}},'in'),
+                React.createElement('span',{style:{fontSize:11.5,fontWeight:700,color:'var(--t1)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}},m.taskTitle),
+                isUnread&&React.createElement('span',{style:{width:7,height:7,borderRadius:'50%',background:'#8b5cf6',flexShrink:0,marginLeft:'auto'}})
+              ),
+              React.createElement('div',{style:{fontSize:12,color:'var(--t2)',marginBottom:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.body),
+              React.createElement('div',{style:{fontSize:10.5,color:'var(--t3)'}},authorName(m.from)+' · '+new Date(m.at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}))
+            );
+          })
+    )
+  );
+};
 // TOPBAR
 const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks})=>{
   const {tasks,projects}=useCtx();
@@ -1837,6 +1917,8 @@ const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks})=>{
         React.createElement('span',null,'🔇'),
         myNoComment,' task',myNoComment>1?'s':'',' pending'
       ),
+      // Mentions Bell
+      React.createElement(MentionsBell,{user}),
       // Bell: password reset notifications (global admin only)
       user.role==='global_admin'&&React.createElement('button',{
         onClick:()=>onGoToPwResets&&onGoToPwResets(),
@@ -3736,7 +3818,7 @@ const SupervisorReviewScreen=({user,setSelTask,activeDept=''})=>{
 
 const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDept=''})=>{
   const {tasks,setTasks,users,taskTypes,projects}=useCtx();
-  const [f,setF]=useState({proj:initialProjFilter||'',asgn:'',st:'',q:'',phase:'',noComment:false});
+  const [f,setF]=useState({proj:initialProjFilter||'',asgn:'',st:'',q:'',phase:'',type:'',dir:'',noComment:false});
   const [collapsed,setCollapsed]=useState({});
   // Sync initialProjFilter when it changes (from View Tasks button)
   React.useEffect(()=>{if(initialProjFilter){setF(prev=>({...prev,proj:initialProjFilter}));if(clearProjFilter)clearProjFilter();}}, [initialProjFilter]);
@@ -3756,7 +3838,7 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
     if(f.st&&t.status!==f.st)return false;
     if(f.q&&!t.title.toLowerCase().includes(f.q.toLowerCase()))return false;
     if(f.dept&&t.department!==f.dept)return false;
-    if(f.type&&t.taskTypeId!==f.type)return false;
+    if(f.dir&&(t.direction||'normal')!==f.dir)return false;
     if(f.noComment){
       const today=new Date().toISOString().split('T')[0];
       const hasCommentToday=(t.comments||[]).some(c=>c.createdAt&&c.createdAt.startsWith(today));
@@ -3913,6 +3995,10 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
       ),
       React.createElement('select',{className:'fs',value:f.st,onChange:e=>setF({...f,st:e.target.value})},React.createElement('option',{value:''},'All Statuses'),Object.entries(ST).map(([k,v])=>React.createElement('option',{key:k,value:k},v.l))),
       React.createElement('select',{className:'fs',value:f.type||'',onChange:e=>setF({...f,type:e.target.value})},React.createElement('option',{value:''},'All Types'),taskTypes.filter(t=>t.isActive).map(t=>React.createElement('option',{key:t.id,value:t.id},t.name))),
+      React.createElement('select',{className:'fs',value:f.dir||'',onChange:e=>setF({...f,dir:e.target.value})},
+        React.createElement('option',{value:''},'All Directions'),
+        Object.entries(DIRECTIONS).map(([k,d])=>React.createElement('option',{key:k,value:k},d.icon+' '+d.label))
+      ),
       React.createElement('button',{
         onClick:()=>setF({...f,noComment:!f.noComment}),
         style:{
@@ -3927,7 +4013,7 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
         'No Comment Today',
         f.noComment&&React.createElement('span',{style:{background:'#dc2626',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:11}},filt.length)
       ),
-      (f.proj||f.asgn||f.st||f.q||f.type||f.noComment)&&React.createElement(Btn,{v:'gh',sz:'sm',ch:'Clear',onClick:()=>setF({proj:'',asgn:'',st:'',q:'',phase:'',dept:'',type:'',noComment:false})})
+      (f.proj||f.asgn||f.st||f.q||f.type||f.dir||f.noComment)&&React.createElement(Btn,{v:'gh',sz:'sm',ch:'Clear',onClick:()=>setF({proj:'',asgn:'',st:'',q:'',phase:'',dept:'',type:'',dir:'',noComment:false})})
     ),
     React.createElement('div',{style:{flex:1,overflowY:'auto',padding:'20px 24px'}},
       Object.keys(ST).map(s=>{
