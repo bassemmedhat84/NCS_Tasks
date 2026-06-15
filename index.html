@@ -734,12 +734,14 @@ const TaskTimeTab=({task,user,upd})=>{
   const [editH,setEditH]=useState('');
   const [editM,setEditM]=useState('');
   const timeLog=task.timeLog||[];
+  const isReviewed=!!task.supervisorReview; // lock if reviewed
 
   const totalMins=timeLog.reduce((s,e)=>s+(e.hours*60)+(e.minutes||0),0);
   const totalH=Math.floor(totalMins/60);
   const totalM=totalMins%60;
 
   const addEntry=()=>{
+    if(isReviewed)return;
     const h=parseInt(hours)||0;
     const m=parseInt(minutes)||0;
     if(h===0&&m===0)return;
@@ -756,9 +758,10 @@ const TaskTimeTab=({task,user,upd})=>{
     setHours('');setMinutes('');setNote('');
   };
 
-  const deleteEntry=(id)=>upd({...task,timeLog:timeLog.filter(e=>e.id!==id)});
+  const deleteEntry=(id)=>{if(!isReviewed)upd({...task,timeLog:timeLog.filter(e=>e.id!==id)});};
 
   const saveEdit=(id)=>{
+    if(isReviewed)return;
     upd({...task,timeLog:timeLog.map(e=>e.id===id?{...e,hours:parseInt(editH)||0,minutes:parseInt(editM)||0}:e)});
     setEditId(null);
   };
@@ -776,8 +779,14 @@ const TaskTimeTab=({task,user,upd})=>{
       React.createElement('div',{style:{fontSize:36}},'⏱️')
     ),
 
-    // Add new entry
-    React.createElement('div',{className:'cd',style:{padding:'16px 18px',marginBottom:16}},
+    // Reviewed lock notice
+    isReviewed&&React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'10px 14px',background:'#f0fdf4',border:'1.5px solid #bbf7d0',borderRadius:10,marginBottom:16,fontSize:12.5,fontWeight:600,color:'#059669'}},
+      React.createElement('span',{style:{fontSize:16}},'🔒'),
+      'Task is reviewed — time log is locked and cannot be edited'
+    ),
+
+    // Add new entry — hidden if reviewed
+    !isReviewed&&React.createElement('div',{className:'cd',style:{padding:'16px 18px',marginBottom:16}},
       React.createElement('div',{style:{fontSize:12,fontWeight:700,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:12}},'➕ Log Time'),
       React.createElement('div',{style:{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}},
         React.createElement('div',{style:{flex:'0 0 100px'}},
@@ -826,7 +835,7 @@ const TaskTimeTab=({task,user,upd})=>{
                 ? React.createElement('input',{className:'ip',type:'number',min:0,max:59,value:editM,onChange:ev=>setEditM(ev.target.value),style:{textAlign:'center',padding:'4px',fontSize:13}})
                 : React.createElement('span',{style:{fontSize:13,textAlign:'center',color:'var(--t2)'}},e.minutes+'m'),
               React.createElement('span',{style:{fontSize:12,color:'var(--t3)',fontStyle:e.note?'normal':'italic'}},e.note||'—'),
-              React.createElement('div',{style:{display:'flex',gap:4}},
+              !isReviewed&&React.createElement('div',{style:{display:'flex',gap:4}},
                 isEditing
                   ? React.createElement(React.Fragment,null,
                       React.createElement('button',{onClick:()=>saveEdit(e.id),style:{fontSize:11,padding:'3px 8px',background:'#10b981',color:'#fff',border:'none',borderRadius:5,cursor:'pointer',fontWeight:700}},'✓'),
@@ -912,7 +921,16 @@ const TaskPanel=({task:init,onClose,onUpdate,user})=>{
               React.createElement('span',{style:{width:6,height:6,borderRadius:'50%',background:st.d,display:'inline-block',marginRight:4}}),st.l
             ),
             tt&&React.createElement('span',{className:'bg',style:{background:tt.colorHex+'18',color:tt.colorHex,border:`1px solid ${tt.colorHex}30`}},tt.name),
-            dir&&React.createElement('span',{className:dir.cls},dir.icon,' ',dir.label)
+            dir&&React.createElement('span',{className:dir.cls},dir.icon,' ',dir.label),
+            // Task hours badge
+            (()=>{
+              const tl=task.timeLog||[];
+              const mins=tl.reduce((s,e)=>s+(e.hours||0)*60+(e.minutes||0),0);
+              if(mins===0)return null;
+              const h=Math.floor(mins/60);const m=mins%60;
+              const label=(h>0?h+'h ':'')+(m>0?m+'m':'');
+              return React.createElement('span',{style:{fontSize:11,fontWeight:700,padding:'2px 9px',borderRadius:20,background:'#f0fdf4',color:'#059669',border:'1px solid #bbf7d0',display:'flex',alignItems:'center',gap:4}},'⏱ '+label);
+            })()
           ),
           React.createElement('div',{style:{fontFamily:'var(--fd)',fontSize:18,fontWeight:800,lineHeight:1.3}},task.title),
           React.createElement('div',{style:{fontSize:12,color:'var(--t3)',marginTop:4,fontWeight:500}},prj?.name)
@@ -1804,7 +1822,7 @@ const Sidebar=({screen,setScreen,user,onLogout,open,setOpen,activeDept,setActive
   );
 };
 // MENTIONS BELL COMPONENT
-const MentionsBell=({user})=>{
+const MentionsBell=({user,onOpenTask})=>{
   const {tasks,users}=useCtx();
   const [showDrop,setShowDrop]=useState(false);
   const seenKey='ncsflow_seen_mentions_'+user.id;
@@ -1848,7 +1866,19 @@ const MentionsBell=({user})=>{
         ? React.createElement('div',{style:{padding:'28px',textAlign:'center',color:'var(--t3)',fontSize:13}},'No mentions yet 👋')
         : [...myMentions].reverse().map(m=>{
             const isUnread=!seen.includes(m.commentId);
-            return React.createElement('div',{key:m.commentId,style:{padding:'10px 14px',borderBottom:'1px solid var(--bdr)',background:isUnread?'#8b5cf608':'transparent'}},
+            const taskObj=tasks.find(t=>t.id===m.taskId);
+            const handleClick=()=>{
+              // Mark this mention as seen
+              const newSeen=[...seen,m.commentId];
+              try{localStorage.setItem(seenKey,JSON.stringify(newSeen));}catch{}
+              setSeen(newSeen);
+              setShowDrop(false);
+              if(taskObj&&onOpenTask)onOpenTask(taskObj);
+            };
+            return React.createElement('div',{key:m.commentId,
+              onClick:handleClick,
+              style:{padding:'10px 14px',borderBottom:'1px solid var(--bdr)',background:isUnread?'#8b5cf608':'transparent',cursor:'pointer',transition:'background .1s'}
+            },
               React.createElement('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:4,flexWrap:'wrap'}},
                 React.createElement('span',{style:{fontSize:11.5,fontWeight:700,color:'#8b5cf6'}},'@'+user.fullName.split(' ')[0]),
                 React.createElement('span',{style:{fontSize:11,color:'var(--t3)'}},'in'),
@@ -1863,7 +1893,7 @@ const MentionsBell=({user})=>{
   );
 };
 // TOPBAR
-const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks})=>{
+const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks,onOpenTask})=>{
   const {tasks,projects}=useCtx();
   const [dark,setDark]=useState(getDarkMode());
   const [soundOn,setSoundOn]=useState(()=>{try{return localStorage.getItem('ncsflow_sound')!=='0';}catch{return true;}});
@@ -1918,7 +1948,7 @@ const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks})=>{
         myNoComment,' task',myNoComment>1?'s':'',' pending'
       ),
       // Mentions Bell
-      React.createElement(MentionsBell,{user}),
+      React.createElement(MentionsBell,{user,onOpenTask}),
       // Bell: password reset notifications (global admin only)
       user.role==='global_admin'&&React.createElement('button',{
         onClick:()=>onGoToPwResets&&onGoToPwResets(),
@@ -3143,7 +3173,7 @@ const EmployeeHoursScreen=({user,activeDept=''})=>{
 
       // Table header
       React.createElement('div',{style:{
-        display:'grid',gridTemplateColumns:'1fr 120px 120px 120px 120px',
+        display:'grid',gridTemplateColumns:'1fr 100px 110px 80px 110px 110px',
         padding:'7px 18px',background:'var(--card2)',
         borderBottom:'1px solid var(--bdr)',
         fontSize:10.5,fontWeight:700,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.04em'
@@ -3151,6 +3181,7 @@ const EmployeeHoursScreen=({user,activeDept=''})=>{
         React.createElement('span',null,'Employee'),
         React.createElement('span',{style:{textAlign:'center'}},'Meetings'),
         React.createElement('span',{style:{textAlign:'center'}},'Mtg Hours'),
+        React.createElement('span',{style:{textAlign:'center'}},'Tasks'),
         React.createElement('span',{style:{textAlign:'center'}},'Task Hours'),
         React.createElement('span',{style:{textAlign:'center'}},'Total Hours')
       ),
@@ -3161,9 +3192,10 @@ const EmployeeHoursScreen=({user,activeDept=''})=>{
         const tskMins=getEmpTaskMins(u.id);
         const totalMins=mtgMins+tskMins;
         const mtgCount=getEmpMtgCount(u.id);
+        const taskCount=getEmpTaskCount(u.id);
         const isLast=i===deptUsers.length-1;
         return React.createElement('div',{key:u.id,style:{
-          display:'grid',gridTemplateColumns:'1fr 120px 120px 120px 120px',
+          display:'grid',gridTemplateColumns:'1fr 100px 110px 80px 110px 110px',
           padding:'11px 18px',
           borderBottom:isLast?'none':'1px solid var(--bdr)',
           alignItems:'center',
@@ -3185,6 +3217,10 @@ const EmployeeHoursScreen=({user,activeDept=''})=>{
           React.createElement('div',{style:{textAlign:'center'}},
             React.createElement('span',{style:{fontSize:14,fontWeight:900,fontFamily:'var(--fd)',color:mtgMins>0?(deptInfo?deptInfo.color:'var(--or)'):'var(--t3)'}},fmtH(mtgMins))
           ),
+          // Tasks count
+          React.createElement('div',{style:{textAlign:'center'}},
+            React.createElement('span',{style:{fontSize:13,fontWeight:700,color:taskCount>0?'#10b981':'var(--t3)'}},taskCount)
+          ),
           // Task hours
           React.createElement('div',{style:{textAlign:'center'}},
             React.createElement('span',{style:{fontSize:14,fontWeight:900,fontFamily:'var(--fd)',color:tskMins>0?'#8b5cf6':'var(--t3)'}},fmtH(tskMins))
@@ -3198,17 +3234,16 @@ const EmployeeHoursScreen=({user,activeDept=''})=>{
 
       // Footer total
       deptUsers.length>1&&React.createElement('div',{style:{
-        display:'grid',gridTemplateColumns:'1fr 120px 120px 120px 120px',
+        display:'grid',gridTemplateColumns:'1fr 100px 110px 80px 110px 110px',
         padding:'9px 18px',
         borderTop:'2px solid '+(deptInfo?deptInfo.color+'35':'var(--bdr)'),
         background:deptInfo?deptInfo.color+'10':'var(--card2)',
         alignItems:'center'
       }},
         React.createElement('span',{style:{fontSize:12,fontWeight:800,color:deptInfo?deptInfo.color:'var(--t1)'}},'Total'),
-        React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,color:'#3b82f6'}},
-          deptUsers.reduce((s,u)=>s+getEmpMtgCount(u.id),0)
-        ),
+        React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,color:'#3b82f6'}},deptUsers.reduce((s,u)=>s+getEmpMtgCount(u.id),0)),
         React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,fontFamily:'var(--fd)',color:deptInfo?deptInfo.color:'var(--or)'}},fmtH(totalMtgMins)),
+        React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,color:'#10b981'}},deptUsers.reduce((s,u)=>s+getEmpTaskCount(u.id),0)),
         React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,fontFamily:'var(--fd)',color:'#8b5cf6'}},fmtH(totalTskMins)),
         React.createElement('span',{style:{textAlign:'center',fontSize:13,fontWeight:900,fontFamily:'var(--fd)',color:'#f5a623'}},fmtH(totalMtgMins+totalTskMins))
       )
@@ -3818,7 +3853,7 @@ const SupervisorReviewScreen=({user,setSelTask,activeDept=''})=>{
 
 const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDept=''})=>{
   const {tasks,setTasks,users,taskTypes,projects}=useCtx();
-  const [f,setF]=useState({proj:initialProjFilter||'',asgn:'',st:'',q:'',phase:'',type:'',dir:'',noComment:false});
+  const [f,setF]=useState({proj:initialProjFilter||'',asgn:'',st:'',q:'',phase:'',type:'',dir:'',noComment:false,unassigned:false});
   const [collapsed,setCollapsed]=useState({});
   // Sync initialProjFilter when it changes (from View Tasks button)
   React.useEffect(()=>{if(initialProjFilter){setF(prev=>({...prev,proj:initialProjFilter}));if(clearProjFilter)clearProjFilter();}}, [initialProjFilter]);
@@ -3839,6 +3874,7 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
     if(f.q&&!t.title.toLowerCase().includes(f.q.toLowerCase()))return false;
     if(f.dept&&t.department!==f.dept)return false;
     if(f.dir&&(t.direction||'normal')!==f.dir)return false;
+    if(f.unassigned&&t.assignedTo)return false;
     if(f.noComment){
       const today=new Date().toISOString().split('T')[0];
       const hasCommentToday=(t.comments||[]).some(c=>c.createdAt&&c.createdAt.startsWith(today));
@@ -4013,7 +4049,21 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
         'No Comment Today',
         f.noComment&&React.createElement('span',{style:{background:'#dc2626',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:11}},filt.length)
       ),
-      (f.proj||f.asgn||f.st||f.q||f.type||f.dir||f.noComment)&&React.createElement(Btn,{v:'gh',sz:'sm',ch:'Clear',onClick:()=>setF({proj:'',asgn:'',st:'',q:'',phase:'',dept:'',type:'',dir:'',noComment:false})})
+      React.createElement('button',{
+        onClick:()=>setF({...f,unassigned:!f.unassigned,asgn:''}),
+        style:{
+          display:'flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:8,
+          cursor:'pointer',fontFamily:'var(--fb)',fontSize:12,fontWeight:600,
+          background:f.unassigned?'#fef3c7':'#fff',
+          color:f.unassigned?'#d97706':'var(--t3)',
+          border:f.unassigned?'1.5px solid #fcd34d':'1.5px solid var(--bdr)'
+        }
+      },
+        React.createElement('span',null,'👤'),
+        'Unassigned',
+        f.unassigned&&React.createElement('span',{style:{background:'#d97706',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:11}},filt.length)
+      ),
+      (f.proj||f.asgn||f.st||f.q||f.type||f.dir||f.noComment||f.unassigned)&&React.createElement(Btn,{v:'gh',sz:'sm',ch:'Clear',onClick:()=>setF({proj:'',asgn:'',st:'',q:'',phase:'',dept:'',type:'',dir:'',noComment:false,unassigned:false})})
     ),
     React.createElement('div',{style:{flex:1,overflowY:'auto',padding:'20px 24px'}},
       Object.keys(ST).map(s=>{
@@ -4064,7 +4114,19 @@ const Tasks=({user,selTask,setSelTask,initialProjFilter,clearProjFilter,activeDe
                       display:'inline-flex',alignItems:'center',gap:3,fontSize:10.5,fontWeight:600,
                       padding:'1px 7px',borderRadius:4,
                       background:td.color+'18',color:td.color,border:'1px solid '+td.color+'30'
-                    }},td.icon,' ',td.name):null;})()
+                    }},td.icon,' ',td.name):null;})(),
+                    // Task time badge
+                    (()=>{
+                      const tl=t.timeLog||[];
+                      const mins=tl.reduce((s,e)=>s+(e.hours||0)*60+(e.minutes||0),0);
+                      if(!mins)return null;
+                      const h=Math.floor(mins/60);const m=mins%60;
+                      return React.createElement('span',{style:{
+                        display:'inline-flex',alignItems:'center',gap:3,fontSize:10.5,fontWeight:700,
+                        padding:'1px 7px',borderRadius:4,
+                        background:'#f0fdf4',color:'#059669',border:'1px solid #bbf7d0'
+                      }},'⏱ '+(h>0?h+'h ':''+(m>0?m+'m':'')));
+                    })()
                   )
                 ),
                 React.createElement('div',{className:'trg'},
@@ -5821,7 +5883,7 @@ const App=()=>{
     React.createElement('div',{className:'app'},
       React.createElement(Sidebar,{screen,setScreen:s=>{setScreen(s);setSelTask(null)},user,onLogout:()=>{authSignOut();setUser(null);setScreen('dashboard');setActiveDept('');},open:sbOpen,setOpen:setSbOpen,activeDept,setActiveDept}),
       React.createElement('div',{className:'main'},
-        React.createElement(Topbar,{user,onMenu:()=>setSbOpen(v=>!v),activeDept,onGoToPwResets:()=>setScreen('pwresets'),onGoToTasks:()=>setScreen('tasks')}),
+        React.createElement(Topbar,{user,onMenu:()=>setSbOpen(v=>!v),activeDept,onGoToPwResets:()=>setScreen('pwresets'),onGoToTasks:()=>setScreen('tasks'),onOpenTask:(t)=>{setSelTask(t);setScreen('tasks');}}),
         (screenMap[screen]||screenMap.dashboard)()
       ),
       // Global TaskPanel — works from any screen (SupervisorReview, Dashboard, etc.)
