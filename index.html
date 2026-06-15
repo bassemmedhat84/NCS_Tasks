@@ -640,7 +640,7 @@ const DailyCommentModal=({task,user,onClose,onSubmit})=>{
 };
 
 // @mention autocomplete textarea
-const MentionTextarea=({value,onChange,users,placeholder})=>{
+const MentionTextarea=({value,onChange,users,placeholder,onFocus})=>{
   const [suggestions,setSuggestions]=useState([]);
   const [mentionStart,setMentionStart]=useState(-1);
   const taRef=useRef(null);
@@ -682,6 +682,7 @@ const MentionTextarea=({value,onChange,users,placeholder})=>{
       className:'ip',rows:3,
       placeholder,value,
       onChange:handleChange,
+      onFocus:onFocus,
       onKeyDown:e=>{if(e.key==='Escape'){setSuggestions([]);setMentionStart(-1);}}
     }),
     suggestions.length>0&&React.createElement('div',{style:{
@@ -907,7 +908,9 @@ const TaskPanel=({task:init,onClose,onUpdate,user})=>{
   };
 
   const dir=task.direction?DIRECTIONS[task.direction]:null;
-  const tabs=[{id:'details',l:'Details'},{id:'comments',l:'Comments',cnt:(task.comments||[]).length},{id:'attachments',l:'Files',cnt:(task.attachments||[]).length},{id:'history',l:'History'},{id:'tasktime',l:'Task Time',cnt:(task.timeLog||[]).length||null}];
+  const isSupport=user.role==='support';
+  const tabs=[{id:'details',l:'Details'},{id:'comments',l:'Comments',cnt:(task.comments||[]).length},{id:'attachments',l:'Files',cnt:(task.attachments||[]).length},{id:'history',l:'History'},...(!isSupport?[{id:'tasktime',l:'Task Time',cnt:(task.timeLog||[]).length||null}]:[])];
+
 
   return React.createElement('div',{className:'pov'},
     React.createElement('div',{className:'pbk',onClick:onClose}),
@@ -1171,7 +1174,13 @@ const TaskPanel=({task:init,onClose,onUpdate,user})=>{
                 value:cmt,
                 onChange:setCmt,
                 users:users,
-                placeholder:'Write a comment… type @ to mention someone'
+                placeholder:'Write a comment… type @ to mention someone',
+                onFocus:()=>{
+                  // Auto-add @AssignedUser if comment is empty and assigned is not self
+                  if(!cmt.trim()&&asgn&&asgn.id!==user.id){
+                    setCmt('@'+asgn.fullName+' ');
+                  }
+                }
               }),
               React.createElement(Btn,{v:'pr',sz:'sm',ch:React.createElement(React.Fragment,null,I.comment,'\u00a0Comment'),onClick:addCmt,dis:!cmt.trim()})
             )
@@ -1195,7 +1204,7 @@ const TaskPanel=({task:init,onClose,onUpdate,user})=>{
           (!task.auditLog||task.auditLog.length===0)&&React.createElement('div',{style:{textAlign:'center',padding:'28px 0',color:'var(--t3)',fontSize:13}},'No history yet.')
         ),
 
-        tab==='tasktime'&&React.createElement(TaskTimeTab,{task,user,upd})
+        tab==='tasktime'&&!isSupport&&React.createElement(TaskTimeTab,{task,user,upd})
       ),
 
       showDaily&&React.createElement(DailyCommentModal,{task,user,onClose:()=>setShowDaily(false),onSubmit:(body,blocker)=>{submitDaily(body,blocker);setShowDaily(false)}})
@@ -1947,6 +1956,12 @@ const Topbar=({user,onMenu,activeDept='',onGoToPwResets,onGoToTasks,onOpenTask})
         React.createElement('span',null,'🔇'),
         myNoComment,' task',myNoComment>1?'s':'',' pending'
       ),
+      // Notification permission prompt — show if not granted
+      typeof Notification!=='undefined'&&Notification.permission==='default'&&React.createElement('button',{
+        onClick:()=>Notification.requestPermission(),
+        title:'Enable browser notifications',
+        style:{padding:'4px 10px',border:'1.5px solid #f59e0b',borderRadius:8,background:'#fffbeb',color:'#d97706',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'var(--fb)',whiteSpace:'nowrap'}
+      },'🔔 Enable Notifications'),
       // Mentions Bell
       React.createElement(MentionsBell,{user,onOpenTask}),
       // Bell: password reset notifications (global admin only)
@@ -5768,9 +5783,53 @@ const App=()=>{
 
   // Load all data from Firebase on mount — realtime listeners
   useEffect(()=>{
+    // Request notification permission on load
+    if('Notification' in window && Notification.permission==='default'){
+      Notification.requestPermission();
+    }
+
     const unsubs=[];
+    const prevTaskIds=new Set();
+    const prevMentionIds=new Set();
+
+    const sendNotif=(title,body,icon='')=>{
+      if(Notification.permission==='granted'){
+        try{new Notification(title,{body,icon:'https://ncsbm.github.io/NCS_Tasks/favicon.ico',tag:title,requireInteraction:false});}
+        catch(e){}
+      }
+    };
+
     // Always mark dbReady after first response from Firebase (even if null/empty)
-    unsubs.push(dbOn('ncsflow/tasks',   v=>{setTasksRaw(v?( Array.isArray(v)?v:Object.values(v) ):[]);dbReadyRef.current=true;setDbReady(true);}));
+    let firstTaskLoad=true;
+    unsubs.push(dbOn('ncsflow/tasks',v=>{
+      const arr=v?(Array.isArray(v)?v:Object.values(v)):[];
+      // Detect new tasks & new mentions after first load
+      if(!firstTaskLoad){
+        arr.forEach(t=>{
+          // New task assigned to me
+          if(!prevTaskIds.has(t.id)&&t.assignedTo===user?.id){
+            sendNotif('📋 New Task Assigned',t.title);
+          }
+          // New mention in comments
+          (t.comments||[]).forEach(c=>{
+            const mKey=t.id+'_'+c.id;
+            if(!prevMentionIds.has(mKey)&&c.mentions&&c.mentions.includes(user?.id)&&c.userId!==user?.id){
+              sendNotif('💬 You were mentioned','in: '+t.title);
+            }
+            prevMentionIds.add(mKey);
+          });
+          prevTaskIds.add(t.id);
+        });
+      } else {
+        // First load — just seed the sets, no notifications
+        arr.forEach(t=>{
+          prevTaskIds.add(t.id);
+          (t.comments||[]).forEach(c=>prevMentionIds.add(t.id+'_'+c.id));
+        });
+        firstTaskLoad=false;
+      }
+      setTasksRaw(arr);dbReadyRef.current=true;setDbReady(true);
+    }));
     unsubs.push(dbOn('ncsflow/projects',v=>{setProjectsRaw(v?(Array.isArray(v)?v:Object.values(v)):[]);}));
     unsubs.push(dbOn('ncsflow/users',   v=>{setUsersRaw(v?(Array.isArray(v)?v:Object.values(v)):[]);}));
     unsubs.push(dbOn('ncsflow/tasktypes',v=>{if(v)setTaskTypesRaw(Array.isArray(v)?v:Object.values(v));}));
